@@ -16,6 +16,56 @@
 
 
 
+
+void issue(pairing_t pairing, group_params *params, int user_id, int expiry_time,
+	   user_key *user_sk, reg_entry *reg, element_t X, element_t X_tilde, element_t x) {
+  // Initialize user_key and reg_entry
+  user_sk->A = (element_t *)malloc(sizeof(element_t) * MAX_TIME);
+  reg->A = (element_t *)malloc(sizeof(element_t) * MAX_TIME);
+
+  // Initialize and set user's secret key
+  element_init_Zr(user_sk->x, pairing);
+  element_set(user_sk->x, x);  // Copy the x value from join
+
+  // Generate user's signing key
+  for (int i = 0; i < MAX_TIME; i++) {
+    element_init_G1(user_sk->A[i], pairing);
+    element_init_G1(reg->A[i], pairing);
+
+    element_t z, alpha;
+    element_init_Zr(z, pairing);
+    element_init_Zr(alpha, pairing);
+    element_random(z);
+    element_random(alpha);
+
+    element_t temp;
+    element_init_G1(temp, pairing);
+    element_pow_zn(temp, params->gpk[3], z); // h0^z
+    element_mul(temp, temp, params->gpk[4]); // h0^z * h1
+    element_pow_zn(temp, temp, alpha);
+    element_mul(temp, temp, X); // (h0^z * h1)^alpha * X
+
+    element_mul(user_sk->A[i], temp, params->gpk[0]); // ((h0^z * h1)^alpha * X) * g
+    element_pow_zn(temp, user_sk->A[i], params->msk[0]);
+    element_div(user_sk->A[i], params->gpk[0], temp); // g / (((h0^z * h1)^alpha * X) * g)^gamma_A
+
+    element_set(reg->A[i], user_sk->A[i]);
+
+    element_clear(z);
+    element_clear(alpha);
+    element_clear(temp);
+  }
+
+  // Set expiry time and registration token
+  user_sk->t = expiry_time;
+  reg->t = expiry_time;
+  element_init_G1(reg->grt, pairing);
+  element_set(reg->grt, X_tilde);
+}
+
+
+
+
 int verify_join(pairing_t pairing, group_params *params, element_t X, element_t X_tilde, element_t s, element_t c) {
   element_t tmp1, tmp2, R_calc, R_tilde_calc;
   element_init_G1(tmp1, pairing);
@@ -31,14 +81,14 @@ int verify_join(pairing_t pairing, group_params *params, element_t X, element_t 
   element_pow_zn(tmp2, X_tilde, c); //tmp2=X_tilde^c
   element_div(R_tilde_calc, tmp1, tmp2); //R_tilde_calc = tmp1/tmp2
 
-  element_printf("h2=%B\n", params->gpk[5]);
-  element_printf("g_tilde_tilde=%B\n", params->gpk[1]);
-  element_printf("X=%B\n", X);
-  element_printf("X_tilde=%B\n", X_tilde);
-  element_printf("R_calc=%B\n", R_calc);
-  element_printf("R_tilde_calc=%B\n", R_tilde_calc);
-  element_printf("c=%B\n", c);
-  element_printf("s=%B\n", s);
+  // element_printf("h2=%B\n", params->gpk[5]);
+  // element_printf("g_tilde_tilde=%B\n", params->gpk[1]);
+  // element_printf("X=%B\n", X);
+  // element_printf("X_tilde=%B\n", X_tilde);
+  // element_printf("R_calc=%B\n", R_calc);
+  // element_printf("R_tilde_calc=%B\n", R_tilde_calc);
+  // element_printf("c=%B\n", c);
+  // element_printf("s=%B\n", s);
 
   element_t c2;
   element_init_Zr(c2, pairing);
@@ -114,6 +164,9 @@ int main(int argc, char *argv[]) {
     return 0;
   }
   fprintf(stderr, "ZKP verification for %s completed successfully.\n", userid);
+
+
+
 
   element_clear(X);
   element_clear(X_tilde);
