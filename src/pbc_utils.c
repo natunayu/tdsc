@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <openssl/sha.h>
 
 
 int pairing_init_from_file(pairing_t pairing, const char *param_file) {
@@ -79,30 +80,68 @@ int save_elem(element_t *elems, size_t count, const char *dir, const char *basen
 
 
 
-int load_elem(element_t e, const char *filename, int base) {
-    FILE *fp = fopen(filename, "r");
+int load_elem(element_t *elems, size_t count, const char *dir, const char *basename, int base) {
+    char path[PATH_MAX];
+    FILE *fp;
+    size_t read_count = 0;
+    
+    char line_buf[4096]; 
+
+    if (snprintf(path, sizeof(path), "%s/%s", dir, basename) >= (int)sizeof(path)) {
+        fprintf(stderr, "Error: path too long: %s/%s\n", dir, basename);
+        return -1;
+    }
+    fp = fopen(path, "r");
     if (!fp) {
-        perror("fopen(load)");
+        perror("fopen");
+        fprintf(stderr, "Error opening file for reading: %s\n", path);
         return -1;
     }
 
-    char *line = NULL;
-    size_t len = 0;
-    ssize_t read = getline(&line, &len, fp);
+    for (read_count = 0; read_count < count; read_count++) {
+        // ファイルから1行読み込む
+        if (fgets(line_buf, sizeof(line_buf), fp) == NULL) {
+            // ファイルの終端かエラー
+            break; 
+        }
+        // 読み込んだ文字列を元に要素をセット
+        if (element_set_str(elems[read_count], line_buf, base) == 0) {
+            // 失敗した場合
+            fprintf(stderr, "Error parsing element %zu from file: %s\n", read_count, path);
+            fclose(fp);
+            return -1;
+        }
+    }
+
     fclose(fp);
-    if (read < 0) {
-        perror("getline");
-        free(line);
-        return -1;
-    }
-
-    if (line[read-1] == '\n') line[read-1] = '\0';
-
-    if (element_set_str(e, line, base)) {
-        fprintf(stderr, "element_set_str failed for %s\n", filename);
-        free(line);
-        return -1;
-    }
-    free(line);
-    return 0;
+    return read_count;
 }
+
+
+
+// ハッシュ → Zr
+void hash_to_Zr(element_t out, element_t X, element_t X_tilde, element_t R, element_t R_tilde) {
+  int len1 = element_length_in_bytes(X);
+  int len2 = element_length_in_bytes(X_tilde);
+  int len3 = element_length_in_bytes(R);
+  int len4 = element_length_in_bytes(R_tilde);
+  int buf_len = len1+len2+len3+len4;
+  unsigned char *buf = malloc(buf_len), *p = buf;
+
+  // バイト列を順番に連結してハッシュ化
+  element_to_bytes(p, X);           
+  p += len1;
+  element_to_bytes(p, X_tilde);     
+  p += len2;
+  element_to_bytes(p, R);          
+  p += len3;
+  element_to_bytes(p, R_tilde);
+
+  unsigned char hash[SHA512_DIGEST_LENGTH];
+  SHA512(buf, buf_len, hash);
+  free(buf);
+
+  //Zrの元にマップ
+  element_from_hash(out, hash, SHA512_DIGEST_LENGTH);
+}
+

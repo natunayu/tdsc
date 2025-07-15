@@ -9,35 +9,11 @@
 #include <sys/stat.h>   
 #include <sys/types.h>
 #include "pbc_utils.h"
-
-
-typedef struct {
-  element_t *gpk;
-  element_t *msk;
-} group_params;
-
+#include "types.h"
 
 
 // g, g_hatの生成
-void setup(pairing_t pairing, element_t g, element_t g_hat, const char* param_path) {
-  char param[1024];
-  FILE* paramfile = fopen(param_path, "r");
-  if (!paramfile) {
-    fprintf(stderr, "Error opening parameter file\n");
-    exit(1);
-  }
-  size_t count = fread(param, 1, 1024, paramfile);
-  if (!count) {
-    fprintf(stderr, "Error reading parameter file\n");
-    exit(1);
-  }
-  fclose(paramfile);
-
-  if (pairing_init_set_buf(pairing, param, count)) {
-    fprintf(stderr, "Error initializing pairing\n");
-    exit(1);
-  }
-
+void setup(pairing_t pairing, element_t g, element_t g_hat) {
   element_init_G1(g, pairing);
   element_init_G2(g_hat, pairing);
   
@@ -90,7 +66,6 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // 変数定義
   pairing_t pairing;
   element_t g, g_hat;
   group_params params;
@@ -98,8 +73,10 @@ int main(int argc, char *argv[]) {
   const char *param_path = argv[1];
   const char *id         = argv[2];
 
+  pairing_init_from_file(pairing, param_path); //パラメータ読み込み
+
   // setup, keygenの実行
-  setup(pairing, g, g_hat, param_path);
+  setup(pairing, g, g_hat);
   keygen(pairing, g, g_hat, &params);
 
   // IDディレクトリを作成, サブディレクトリ pub_params, user_keys を作成
@@ -108,20 +85,23 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  char dir_pub[512], dir_user[512];
+  char dir_pub[512];
+  char dir_user[512];
   snprintf(dir_pub,  sizeof(dir_pub),  "%s/pub_params", id);
   snprintf(dir_user, sizeof(dir_user), "%s/user_keys",  id);
 
-  if (mkdir(dir_pub,  0755) && errno != EEXIST) {
-    perror("mkdir pub_params");
-    exit(1);
-  }
   if (mkdir(dir_user, 0755) && errno != EEXIST) {
     perror("mkdir user_keys");
     exit(1);
   }
 
-  // 書き出し
+
+  if (mkdir(dir_pub,  0755) && errno != EEXIST) {
+    perror("mkdir pub_params");
+    exit(1);
+  }
+
+  // g, g_hat, gpk, msk書き出し
   if (save_elem(&g, 1,     dir_pub, "g",     16) < 0) return EXIT_FAILURE;
   if (save_elem(&g_hat, 1, dir_pub, "g_hat", 16) < 0) return EXIT_FAILURE;  
   if (save_elem(params.gpk, 13, id, "groupkey.pub", 16) < 0) return 1;

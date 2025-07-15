@@ -11,6 +11,8 @@
  */
 int pairing_init_from_file(pairing_t pairing, const char *param_file);
 
+
+
 /**
  * element の配列をまとめてファイルに保存
  * ディレクトリがなければ作成します。
@@ -22,11 +24,10 @@ int pairing_init_from_file(pairing_t pairing, const char *param_file);
  * @param base     (in) 16進なら16、10進なら10
  * @return 0: 成功, -1: エラー
  */
-int save_elem(element_t *elems,
-              size_t count,
-              const char *dir,
-              const char *basename,
-              int base);
+int save_elem(element_t *elems, size_t count, const char *dir, const char *basename, int base);
+
+
+
 /**
  * ファイルから PBC element を読み込む
  *   ※ 要素はあらかじめ element_init_*() で初期化しておくこと
@@ -35,6 +36,12 @@ int save_elem(element_t *elems,
  * @param base     (in)     16進数なら 16, 10進数なら 10
  * @return 0: 成功, -1: エラー
  */
-int element_load_from_file(element_t e, const char *filename, int base);
+int load_elem(element_t *elems, size_t count, const char *dir, const char *basename, int base);
+
+
+
+
+void hash_to_Zr(element_t out, element_t X, element_t X_tilde, element_t R, element_t R_tilde);
+
 
 #endif /* PBC_UTILS_H */

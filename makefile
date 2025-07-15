@@ -8,14 +8,15 @@ BUILD_DIR  := build
 
 # -------Settings---------
 PARAM_DIR    := param_f.txt
-ID           := test1
+ID           := test
 CURRENT_TIME := 1
 EXPIRY_TIME  := 2047
+USER_ID      := bob
 # ------------------------
 
 
 # コンパイルファイルの追加
-APPS       := setup     # → 後から "setup join issue" とかにする
+APPS       := setup join issue test    # → 後から "setup join issue" とかにする
 
 # 共通ユーティリティ
 COMMON_SRCS  := \
@@ -25,8 +26,9 @@ COMMON_OBJS  := $(COMMON_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # コンパイルファイルの追加
 ARGS_setup := $(PARAM_DIR) $(ID)
-# ARGS_join  := $(PARAM_DIR) $(ID)
-# ARGS_issue := $(PARAM_DIR) $(ID)
+ARGS_join  := $(PARAM_DIR) $(ID) $(USER_ID)
+ARGS_issue := $(PARAM_DIR) $(ID) $(USER_ID)
+ARGS_test  := $(PARAM_DIR)
 
 .PHONY: all clean $(addprefix run_,$(APPS))
 
