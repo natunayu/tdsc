@@ -35,14 +35,14 @@ void join(pairing_t pairing, group_params *params, element_t X, element_t X_tild
   element_mul(tmp, c, x);   // tmp = c * x
   element_add(s, r, tmp);   // s = r + c·x
 
-  element_printf("h2=%B\n", params->gpk[5]);
-  element_printf("g_tilde=%B\n", params->gpk[1]);
-  element_printf("X=%B\n", X);
-  element_printf("X_tilde=%B\n", X_tilde);
-  element_printf("R=%B\n", R);
-  element_printf("R_tilde=%B\n", R_tilde);
-  element_printf("c=%B\n", c);
-  element_printf("s=%B\n", s);
+  // element_printf("h2=%B\n", params->gpk[5]);
+  // element_printf("g_tilde=%B\n", params->gpk[1]);
+  // element_printf("X=%B\n", X);
+  // element_printf("X_tilde=%B\n", X_tilde);
+  // element_printf("R=%B\n", R);
+  // element_printf("R_tilde=%B\n", R_tilde);
+  // element_printf("c=%B\n", c);
+  // element_printf("s=%B\n", s);
 
   // join内で使ったメモリの開放
   element_clear(r);
