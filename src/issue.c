@@ -9,6 +9,9 @@
 #include <sys/types.h>
 #include "types.h"
 #include "pbc_utils.h"
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#include <openssl/buffer.h>
 
 #ifndef MAX_TIME
 #define MAX_TIME 2048
@@ -17,8 +20,14 @@
 
 
 
-void issue(pairing_t pairing, group_params *params, char user_id, int expiry_time, user_key *user_sk, reg_entry *reg, element_t X, element_t X_tilde, element_t g) {
-  int L = (int)ceil(log2((double)MAX_TIME)); //パス長を計算
+
+void issue(pairing_t pairing, group_params *params, const char *user_id, int expiry_time, user_key *user_sk, reg_entry *reg, element_t X, element_t X_tilde, element_t g) {
+  // パス長 L を expiry_time に合わせて計算
+  int L = 0;
+  for(int t = expiry_time; t > 0; t >>= 1) { // 2で割り続けて0になるまでの回数をカウント
+    L++;
+  }
+
   user_sk->A_len = L;
   user_sk->A_list = malloc(sizeof(element_t) * L); //BBS+署名用のメモリ確保
   user_sk->XI_list = malloc(sizeof(element_t)*L);
@@ -32,7 +41,7 @@ void issue(pairing_t pairing, group_params *params, char user_id, int expiry_tim
     element_init_G1(reg->A_list[j],    pairing);
   }
 
-  element_init_G2(reg->rev_token, pairing); //rev_tokenはX_tildeなのでG2
+  element_init_G1(reg->rev_token, pairing);
   user_sk->expiry = expiry_time;
   reg->expiry = expiry_time;
   element_set(reg->rev_token, X_tilde); 
@@ -41,11 +50,11 @@ void issue(pairing_t pairing, group_params *params, char user_id, int expiry_tim
   int *path_nodes = malloc(sizeof(int) * L); //パスノードの配列を確保
   int h = expiry_time;
   int index = L - 1;
-  //葉(expiry_time)から根までhを親に辿る
 
+  //葉(expiry_time)から根までhを親に辿る
   while (h > 0 && index >= 0) {
     //現在の葉ノード
-    printf("%d, %d\n", h, index);
+    //printf("%d, %d\n", h, index);
 
     //次の葉ノードの計算
     path_nodes[index] = h;
@@ -61,49 +70,74 @@ void issue(pairing_t pairing, group_params *params, char user_id, int expiry_tim
     element_random(user_sk->XI_list[j]);
 
     // g * h0^Z * h1^{u_j} * X
-    element_t tmp, val1, val2;
-    element_init_G1(tmp, pairing);
+    element_t tmp1, tmp2, val1, val2;
+    element_init_G1(tmp1, pairing);
     element_init_G1(val1, pairing);
 
-    element_pow_zn(tmp, params->gpk[3], user_sk->Z_list[j]); // h0^Z
-    element_mul(val1, g, tmp); // g*h0^Z
+    element_pow_zn(tmp1, params->gpk[3], user_sk->Z_list[j]); // h0^Z
+    element_mul(val1, g, tmp1); // g*h0^Z
 
     // h1^{u_j}
     element_t uj_zr; //element powは整数を取れないのでzr上の要素に変換
     element_init_Zr(uj_zr, pairing);
     element_set_si(uj_zr, u_j); // uj_zr = u_j の整数値
-    element_pow_zn(tmp, params->gpk[4], uj_zr); //h1^uj
+    element_pow_zn(tmp1, params->gpk[4], uj_zr); //h1^uj
     element_clear(uj_zr);
 
-    element_mul(val1, val1, tmp); //g * h0^Z * h1^{u_j} 
+    element_mul(val1, val1, tmp1); //g * h0^Z * h1^{u_j} 
     element_mul(val1, val1, X); //*X ,  val2 = g * h0^Z * h1^{u_j} * X
 
     //指数部分
-    element_init_Zr(tmp, pairing);
+    element_init_Zr(tmp2, pairing);
     element_init_Zr(val2, pairing);
-    element_add(tmp, user_sk->XI_list[j], params->msk[0]); //XI + gamma_A
-    element_invert(val2, tmp); // (XI + gamma_A){-1}
+    element_add(tmp2, user_sk->XI_list[j], params->msk[0]); //XI + gamma_A
+    element_invert(val2, tmp2); // (XI + gamma_A){-1}
 
     // A_j = val2 ^ val1
     element_pow_zn(user_sk->A_list[j], val1, val2);
     // Regにも保存
     element_set(reg->A_list[j], user_sk->A_list[j]);
 
-    element_clear(tmp);
+    element_clear(tmp1);
+    element_clear(tmp2);
     element_clear(val1);
     element_clear(val2);
 
   }
-  // // 5) gski (ユーザ署名鍵) の出力
-  // printf("--- gski for user %d ---\n", user_id);
-  // printf("expiry_time = %d\n", user_sk->expiry);
-  // for(int j=0;j<L;j++){
-  //   char *Aj = element_to_si(user_sk->A_list[j]);
-  //   char *aj = element_to_si(user_sk->XI_list[j]);
-  //   char *zj = element_to_si(user_sk->Z_list[j]);
-  //   printf("tuple %d: u_j=%d, alpha=%s, z=%s, A=%s\n", j, path_nodes[j], aj, zj, Aj);
-  //   free(Aj); free(aj); free(zj);
-  // }
+
+  // gski (ユーザ署名鍵) の出力
+  // gski = ({(A_j, XI_j, Z_j), u_i} jE[1.L]) and \tau
+// --- gski（ユーザ署名鍵）の出力 ---
+fprintf(stdout, "=== gski for user %s ===\n", user_id);
+fprintf(stdout, "expiry_time = %d\n", user_sk->expiry);
+
+for(int j = 0; j < L; j++){
+  // 各要素を文字列化
+  char buf_A[1024], buf_XI[1024], buf_Z[1024];
+  element_snprint(buf_A,  sizeof(buf_A),  user_sk->A_list[j]);
+  element_snprint(buf_XI, sizeof(buf_XI), user_sk->XI_list[j]);
+  element_snprint(buf_Z,  sizeof(buf_Z),  user_sk->Z_list[j]);
+
+  fprintf(stdout,
+          "tuple %d: u_j=%d\n"
+          "  XI = %s\n"
+          "  Z  = %s\n"
+          "  A  = %s\n",
+          j,
+          path_nodes[j],
+          buf_XI, buf_Z, buf_A);
+}
+
+
+// revocation token τ (X_tilde) の出力
+{
+  char buf_tau[1024];
+  element_snprint(buf_tau, sizeof(buf_tau), reg->rev_token);
+  fprintf(stdout, "revocation token (X_tilde) = %s\n", buf_tau);
+}
+
+  //regへユーザ情報の保存
+  // (\tau, grti, {A_j}jE[1,L]) to reg[i]
 
   free(path_nodes);
 }
@@ -171,7 +205,7 @@ int main(int argc, char *argv[]) {
   const char *param_path = argv[1];
   const char *id         = argv[2];
   const char *userid     = argv[3];
-  const int *expiry_time = argv[4];
+  int expiry_time = atoi(argv[4]);
 
   char dir_pub[512];
   snprintf(dir_pub,  sizeof(dir_pub),  "%s/pub_params", id);
@@ -227,6 +261,7 @@ int main(int argc, char *argv[]) {
   user_key user_sk;
   reg_entry reg;
 
+  // issue
   issue(pairing, &params, userid, expiry_time, &user_sk, &reg, X, X_tilde, g);
 
   // メモリ開放
