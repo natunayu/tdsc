@@ -17,52 +17,96 @@
 
 
 
-void issue(pairing_t pairing, group_params *params, int user_id, int expiry_time,
-	   user_key *user_sk, reg_entry *reg, element_t X, element_t X_tilde, element_t x) {
-  // Initialize user_key and reg_entry
-  user_sk->A = (element_t *)malloc(sizeof(element_t) * MAX_TIME);
-  reg->A = (element_t *)malloc(sizeof(element_t) * MAX_TIME);
+void issue(pairing_t pairing, group_params *params, char user_id, int expiry_time, user_key *user_sk, reg_entry *reg, element_t X, element_t X_tilde, element_t g) {
+  int L = (int)ceil(log2((double)MAX_TIME)); //パス長を計算
+  user_sk->A_len = L;
+  user_sk->A_list = malloc(sizeof(element_t) * L); //BBS+署名用のメモリ確保
+  user_sk->XI_list = malloc(sizeof(element_t)*L);
+  user_sk->Z_list = malloc(sizeof(element_t)*L);
+  reg->A_list = malloc(sizeof(element_t) * L); 
 
-  // Initialize and set user's secret key
-  element_init_Zr(user_sk->x, pairing);
-  element_set(user_sk->x, x);  // Copy the x value from join
-
-  // Generate user's signing key
-  for (int i = 0; i < MAX_TIME; i++) {
-    element_init_G1(user_sk->A[i], pairing);
-    element_init_G1(reg->A[i], pairing);
-
-    element_t z, alpha;
-    element_init_Zr(z, pairing);
-    element_init_Zr(alpha, pairing);
-    element_random(z);
-    element_random(alpha);
-
-    element_t temp;
-    element_init_G1(temp, pairing);
-    element_pow_zn(temp, params->gpk[3], z); // h0^z
-    element_mul(temp, temp, params->gpk[4]); // h0^z * h1
-    element_pow_zn(temp, temp, alpha);
-    element_mul(temp, temp, X); // (h0^z * h1)^alpha * X
-
-    element_mul(user_sk->A[i], temp, params->gpk[0]); // ((h0^z * h1)^alpha * X) * g
-    element_pow_zn(temp, user_sk->A[i], params->msk[0]);
-    element_div(user_sk->A[i], params->gpk[0], temp); // g / (((h0^z * h1)^alpha * X) * g)^gamma_A
-
-    element_set(reg->A[i], user_sk->A[i]);
-
-    element_clear(z);
-    element_clear(alpha);
-    element_clear(temp);
+  for(int j = 0; j < L; j++){
+    element_init_G1(user_sk->A_list[j], pairing); // 署名はG1上
+    element_init_Zr(user_sk->XI_list[j], pairing);
+    element_init_Zr(user_sk->Z_list[j], pairing);
+    element_init_G1(reg->A_list[j],    pairing);
   }
 
-  // Set expiry time and registration token
-  user_sk->t = expiry_time;
-  reg->t = expiry_time;
-  element_init_G1(reg->grt, pairing);
-  element_set(reg->grt, X_tilde);
-}
+  element_init_G2(reg->rev_token, pairing); //rev_tokenはX_tildeなのでG2
+  user_sk->expiry = expiry_time;
+  reg->expiry = expiry_time;
+  element_set(reg->rev_token, X_tilde); 
 
+  //ここからパスノードの計算
+  int *path_nodes = malloc(sizeof(int) * L); //パスノードの配列を確保
+  int h = expiry_time;
+  int index = L - 1;
+  //葉(expiry_time)から根までhを親に辿る
+
+  while (h > 0 && index >= 0) {
+    //現在の葉ノード
+    printf("%d, %d\n", h, index);
+
+    //次の葉ノードの計算
+    path_nodes[index] = h;
+    h = h / 2;      // 親ノードの計算
+    index--;
+  }
+
+  // 各ノードu_jからBBS+署名を実行してA_jを作成
+  for(int j = 0; j < L; j++){
+    int u_j = path_nodes[j];
+    
+    element_random(user_sk->Z_list[j]);
+    element_random(user_sk->XI_list[j]);
+
+    // g * h0^Z * h1^{u_j} * X
+    element_t tmp, val1, val2;
+    element_init_G1(tmp, pairing);
+    element_init_G1(val1, pairing);
+
+    element_pow_zn(tmp, params->gpk[3], user_sk->Z_list[j]); // h0^Z
+    element_mul(val1, g, tmp); // g*h0^Z
+
+    // h1^{u_j}
+    element_t uj_zr; //element powは整数を取れないのでzr上の要素に変換
+    element_init_Zr(uj_zr, pairing);
+    element_set_si(uj_zr, u_j); // uj_zr = u_j の整数値
+    element_pow_zn(tmp, params->gpk[4], uj_zr); //h1^uj
+    element_clear(uj_zr);
+
+    element_mul(val1, val1, tmp); //g * h0^Z * h1^{u_j} 
+    element_mul(val1, val1, X); //*X ,  val2 = g * h0^Z * h1^{u_j} * X
+
+    //指数部分
+    element_init_Zr(tmp, pairing);
+    element_init_Zr(val2, pairing);
+    element_add(tmp, user_sk->XI_list[j], params->msk[0]); //XI + gamma_A
+    element_invert(val2, tmp); // (XI + gamma_A){-1}
+
+    // A_j = val2 ^ val1
+    element_pow_zn(user_sk->A_list[j], val1, val2);
+    // Regにも保存
+    element_set(reg->A_list[j], user_sk->A_list[j]);
+
+    element_clear(tmp);
+    element_clear(val1);
+    element_clear(val2);
+
+  }
+  // // 5) gski (ユーザ署名鍵) の出力
+  // printf("--- gski for user %d ---\n", user_id);
+  // printf("expiry_time = %d\n", user_sk->expiry);
+  // for(int j=0;j<L;j++){
+  //   char *Aj = element_to_si(user_sk->A_list[j]);
+  //   char *aj = element_to_si(user_sk->XI_list[j]);
+  //   char *zj = element_to_si(user_sk->Z_list[j]);
+  //   printf("tuple %d: u_j=%d, alpha=%s, z=%s, A=%s\n", j, path_nodes[j], aj, zj, Aj);
+  //   free(Aj); free(aj); free(zj);
+  // }
+
+  free(path_nodes);
+}
 
 
 
@@ -115,18 +159,19 @@ int verify_join(pairing_t pairing, group_params *params, element_t X, element_t 
 
 
 int main(int argc, char *argv[]) {
-  if (argc != 4) {
-    fprintf(stderr, "Usage: %s <pairing_param_file> <ID> <USERID>\n", argv[0]);
+  if (argc != 5) {
+    fprintf(stderr, "Usage: %s <pairing_param_file> <ID> <USERID> <EXPIRYTIME>\n", argv[0]);
     return 1;
   }
 
   pairing_t pairing;
-  element_t g_tilde, c, s, X, X_tilde;
+  element_t c, s, X, X_tilde;
   group_params params;
 
   const char *param_path = argv[1];
   const char *id         = argv[2];
   const char *userid     = argv[3];
+  const int *expiry_time = argv[4];
 
   char dir_pub[512];
   snprintf(dir_pub,  sizeof(dir_pub),  "%s/pub_params", id);
@@ -156,6 +201,9 @@ int main(int argc, char *argv[]) {
   // joinの結果を検証
   if(verify_join(pairing, &params, X, X_tilde, s, c) < 0){
     fprintf(stderr, "ZKP verification for %s failed.\n", userid);
+    // ZKPに失敗したので Issueせず終了
+    for (int i = 0; i < 13; i++)  element_clear(params.gpk[i]);
+    free(params.gpk);
     element_clear(X);
     element_clear(X_tilde);
     element_clear(c);
@@ -163,11 +211,27 @@ int main(int argc, char *argv[]) {
     pairing_clear(pairing);
     return 0;
   }
+
   fprintf(stderr, "ZKP verification for %s completed successfully.\n", userid);
+  // ZKPに成功したのでIssueを実行
 
+  // issueで使う要素のロード
+  element_t g;
+  element_init_G1(g, pairing);
+  if (load_elem(&g, 1, dir_pub, "g", 16) < 0) return EXIT_FAILURE; // g
+ 
+  params.msk = (element_t*)malloc(3 * sizeof(element_t));
+  for (int i = 0; i < 3; i++) element_init_Zr(params.msk[i], pairing);
+  if (load_elem(params.msk, 3, id, "masterkey", 10) != 3) return 1; //msk
 
+  user_key user_sk;
+  reg_entry reg;
 
+  issue(pairing, &params, userid, expiry_time, &user_sk, &reg, X, X_tilde, g);
 
+  // メモリ開放
+  for (int i = 0; i < 13; i++)  element_clear(params.gpk[i]);
+  free(params.gpk);
   element_clear(X);
   element_clear(X_tilde);
   element_clear(c);
